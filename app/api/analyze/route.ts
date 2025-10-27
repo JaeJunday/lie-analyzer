@@ -19,8 +19,8 @@ let cachedWorkerPath: string | null = null;
 const candidateWorkerPaths = (): string[] => {
   const paths: string[] = [];
   try {
-    const pdfParsePkg = require.resolve("pdf-parse/package.json");
-    const pdfParseDir = path.dirname(pdfParsePkg);
+    const pdfParseEntry = require.resolve("pdf-parse");
+    const pdfParseDir = path.dirname(pdfParseEntry);
     const add = (candidate: string) => {
       if (!paths.includes(candidate)) {
         paths.push(candidate);
@@ -158,6 +158,17 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const file = form.get("file");
 
+  const respondWithFallback = (extracted: string, locale: Locale, reason: string) => {
+    const fallback = analyzeTranscriptFallback(extracted, locale);
+    return NextResponse.json({
+      success: true,
+      analysis: fallback,
+      preview: createPreview(extracted),
+      source: "heuristic",
+      reason,
+    });
+  };
+
   const requestedLocale = form.get("locale");
   const locale: Locale =
     typeof requestedLocale === "string" && (requestedLocale === "en" || requestedLocale === "ko")
@@ -234,19 +245,34 @@ export async function POST(req: NextRequest) {
     }
   );
 
+  const rawBody = await response.text();
+
   if (!response.ok) {
-    const errorText = await response.text();
-    return failure(`GitHub Models 호출 실패: ${errorText}`, 502);
+    return failure(`GitHub Models 호출 실패: ${rawBody || "<empty body>"}`, 502);
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
+  if (!rawBody.trim()) {
+    return respondWithFallback(extracted, locale, "AI 응답이 비어 있습니다.");
+  }
 
-  const content = payload.choices?.[0]?.message?.content;
+  let payload: { choices?: Array<{ message?: { content?: string } }>; } | null = null;
+
+  try {
+    payload = JSON.parse(rawBody) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+  } catch (error) {
+    return respondWithFallback(
+      extracted,
+      locale,
+      `AI 응답이 JSON 형식이 아닙니다: ${(error as Error).message}`,
+    );
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
 
   if (!content) {
-    return failure("AI 응답을 해석할 수 없습니다.", 502);
+    return respondWithFallback(extracted, locale, "AI 응답을 해석할 수 없습니다.");
   }
 
   const normalizedContent = extractJsonContent(content);
@@ -256,14 +282,11 @@ export async function POST(req: NextRequest) {
   try {
     parsed = JSON.parse(normalizedContent) as AnalysisResult;
   } catch (error) {
-    const fallback = analyzeTranscriptFallback(extracted, locale);
-    return NextResponse.json({
-      success: true,
-      analysis: fallback,
-      preview: createPreview(extracted),
-      source: "heuristic",
-      reason: `AI 응답이 JSON 형식이 아닙니다: ${(error as Error).message}`,
-    });
+    return respondWithFallback(
+      extracted,
+      locale,
+      `AI 응답이 JSON 형식이 아닙니다: ${(error as Error).message}`,
+    );
   }
 
   return NextResponse.json({

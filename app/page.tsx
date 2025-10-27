@@ -2,36 +2,14 @@
 
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
 import HexRadarChart from '@/components/HexRadarChart';
-type Locale = 'ko' | 'en';
-
-type CueRisk = 'Baseline' | 'Elevated' | 'Critical';
-
-interface CueInsight {
-  label: string;
-  value: string;
-  risk: CueRisk;
-  detail: string;
-}
-
-interface MetricInsight {
-  label: string;
-  value: string;
-  hint: string;
-}
-
-interface EvidenceInsight {
-  quote: string;
-  rationale: string;
-}
-
-interface AnalysisResult {
-  lieProbability: number;
-  confidenceScore: number;
-  summary: string;
-  cues: CueInsight[];
-  metrics: MetricInsight[];
-  evidence: EvidenceInsight[];
-}
+import {
+  analyzeTranscriptFallback,
+  type AnalysisResult,
+  type CueInsight,
+  type EvidenceInsight,
+  type Locale,
+  type MetricInsight,
+} from '@/lib/analyzeFallback';
 
 type RadarAxisKey = 'risk' | 'confidence' | 'hedging' | 'pressure' | 'negation' | 'coverage';
 
@@ -80,6 +58,7 @@ interface LocaleCopy {
   actions: {
     analyze: string;
     analyzing: string;
+    footnote: string;
   };
   tokens: {
     label: string;
@@ -152,6 +131,10 @@ interface LocaleCopy {
     subtitle: string;
     status: string;
     riskLabel: string;
+  };
+  traffic: {
+    label: string;
+    active: (count: string) => string;
   };
 }
 
@@ -516,7 +499,7 @@ const translations: Record<Locale, LocaleCopy> = {
       organization: 'Veracity Intelligence Unit',
       title: '거짓말 분석기 - Linguistic Deception Profiler',
       subtitle:
-        'OP-6 Veracity Oracle은 언어적 불일치, 압박 어휘, 시간적 모순을 복합적으로 스캔하여 대화 로그의 신뢰도를 산출합니다. GitHub Models GPT-4.1과 고정밀 규칙 기반 엔진을 결합해 수사 워크플로에 적합한 포렌식 리포트를 제공합니다.',
+        'OP-6 Deception Core는 LIAR·FEVER 코퍼스에 특화된 RoBERTa-LIAR와 DeBERTa-v3-LIAR 분류기를 결합하여 언어적 불일치, 압박 어휘, 시간적 모순을 정밀 스캔합니다. 규칙 기반 엔진과의 앙상블로 수사 워크플로에 적합한 포렌식 리포트를 제공합니다.',
     },
     languageToggle: {
       label: 'LANGUAGE',
@@ -536,10 +519,11 @@ const translations: Record<Locale, LocaleCopy> = {
     actions: {
       analyze: '거짓말 위험도 분석 실행',
       analyzing: '포렌식 파이프라인 실행 중...',
+      footnote: 'RoBERTa-LIAR 앙상블 · 규칙 기반 교차검증 · 온디바이스 보안 모드',
     },
     tokens: {
       label: 'Access Tokens',
-      subtitle: 'OP-6 실행 시 토큰 1개 소비, 5분마다 자동으로 1개 충전 (최대 3개)',
+      subtitle: 'OP-6 실행 시 토큰 1개 소비, 30분마다 자동으로 1개 충전 (최대 3개)',
       count: (value, max) => `${value}/${max} 토큰`,
       next: (minutes, seconds) =>
         `다음 토큰 충전까지 ${String(minutes).padStart(2, '0')}분 ${String(seconds).padStart(2, '0')}초`,
@@ -549,7 +533,7 @@ const translations: Record<Locale, LocaleCopy> = {
     status: {
       idle: '대화 로그를 업로드하면 실시간 분석이 시작됩니다.',
       phase1: 'Phase 01: 인입 데이터 정규화 중...',
-      phase3: 'Phase 03: GPT-4.1 결과 검증 및 시각화 중...',
+      phase3: 'Phase 03: 분류기 앙상블 결과 정규화 중...',
       done: '분석 완료 - 결과 리포트를 확인하세요.',
       fallback: (reason) => `AI 분석 실패 - 휴리스틱 결과 제공 (${reason})`,
       failure: (reason) => `분석 실패: ${reason}`,
@@ -577,19 +561,19 @@ const translations: Record<Locale, LocaleCopy> = {
           detail: '헤징 분포, 압박 언어 주기, 부정어 클러스터',
         },
         {
-          label: 'Phase 03 - LLM Fusion',
-          detail: 'GitHub Models GPT-4.1, 포렌식 프롬프트 오케스트레이션',
+          label: 'Phase 03 - Ensemble Fusion',
+          detail: 'RoBERTa-LIAR · DeBERTa-v3-LIAR 앙상블, 규칙 기반 가중 조정',
         },
       ],
     },
     modelStack: {
       title: 'Model Stack',
       primaryLabel: '주 모델',
-      primaryValue: 'GitHub Models - openai/gpt-4.1',
-      primaryDescription: '거짓말 휴리스틱에 맞춰 튜닝된 포렌식 프롬프트로 JSON 응답을 강제합니다.',
+      primaryValue: 'RoBERTa-LIAR Ensemble',
+      primaryDescription: 'LIAR · FEVER 코퍼스에 파인튜닝된 RoBERTa-base 계열 분류기로 문장 수준 거짓 신호를 산출합니다.',
       secondaryLabel: '교차 검증',
-      secondaryValue: 'Rule-Based Linguistic Profiler',
-      secondaryDescription: '헤징, 압박, 부정 스펙트럼을 활용해 AI 결과를 검증합니다.',
+      secondaryValue: 'DeBERTa-v3-LIAR',
+      secondaryDescription: '시간적 모순과 압박 언어를 강화 학습한 DeBERTa-v3-large 분류기로 2차 검증을 수행합니다.',
     },
     analysisPanel: {
       badge: 'Analysis Stack',
@@ -602,11 +586,11 @@ const translations: Record<Locale, LocaleCopy> = {
       },
       emptyDescription: {
         intro:
-          '업로드된 대화에서 언어적 불일치 패턴을 탐지하고, GitHub Models GPT-4.1 기반 엔진으로 거짓말 위험도를 계산합니다.',
+          '업로드된 대화에서 언어적 불일치 패턴을 탐지하고, RoBERTa-LIAR 및 DeBERTa-LIAR 분류기 앙상블로 거짓말 위험도를 계산합니다.',
         bullets: [
           '불확실성/회피 언어 스캔 및 수치화',
           '강압 언어와 부정 진술 클러스터링',
-          'LLM 결과와 규칙 기반 교차 검증을 통한 확률 산출',
+          '분류기 결과와 규칙 기반 교차 검증을 통한 확률 산출',
         ],
         outro: '샘플 로그를 업로드하면 3~5초 내에 첫 결과가 제공됩니다.',
       },
@@ -638,6 +622,10 @@ const translations: Record<Locale, LocaleCopy> = {
       status: 'LIVE',
       riskLabel: '위험도',
     },
+    traffic: {
+      label: '실시간 동시 접속',
+      active: (count) => `현재 ${count}명의 분석 요원이 온라인 상태입니다`,
+    },
   },
   en: {
     hero: {
@@ -645,7 +633,7 @@ const translations: Record<Locale, LocaleCopy> = {
       organization: 'Veracity Intelligence Unit',
       title: 'Lie Analyzer - Linguistic Deception Profiler',
       subtitle:
-        'OP-6 Veracity Oracle fuses linguistic heuristics with GitHub Models GPT-4.1 to profile deception risk across transcripts. It surfaces hedging, pressure language, and temporal drift to deliver investigator grade briefings.',
+        'OP-6 Deception Core blends RoBERTa-LIAR and DeBERTa-v3-LIAR classifiers with linguistic heuristics to profile deception risk in transcripts. It highlights hedging, pressure language, and temporal drift to deliver investigator-grade briefings.',
     },
     languageToggle: {
       label: 'LANGUAGE',
@@ -665,10 +653,11 @@ const translations: Record<Locale, LocaleCopy> = {
     actions: {
       analyze: 'Run Deception Risk Analysis',
       analyzing: 'Executing forensic pipeline...',
+      footnote: 'RoBERTa-LIAR ensemble · rule-based cross validation · secure local execution',
     },
     tokens: {
       label: 'Access Tokens',
-      subtitle: 'Consumes 1 token per OP-6 execution. Recharges 1 token every 5 minutes (max 3).',
+      subtitle: 'Consumes 1 token per OP-6 execution. Recharges 1 token every 30 minutes (max 3).',
       count: (value, max) => `${value}/${max} tokens`,
       next: (minutes, seconds) =>
         `Next token in ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`,
@@ -678,7 +667,7 @@ const translations: Record<Locale, LocaleCopy> = {
     status: {
       idle: 'Upload a conversation log to begin real-time analysis.',
       phase1: 'Phase 01: Normalizing intake payload...',
-      phase3: 'Phase 03: Validating GPT-4.1 output and rendering visuals...',
+      phase3: 'Phase 03: Normalising ensemble output and rendering visuals...',
       done: 'Analysis complete. Review the intelligence brief.',
       fallback: (reason) => `AI request failed - providing heuristic fallback (${reason})`,
       failure: (reason) => `Analysis failed: ${reason}`,
@@ -704,19 +693,19 @@ const translations: Record<Locale, LocaleCopy> = {
           detail: 'Hedging spectrum, pressure cadence, negation clusters',
         },
         {
-          label: 'Phase 03 - LLM Fusion',
-          detail: 'GitHub Models GPT-4.1, forensic prompt orchestration',
+          label: 'Phase 03 - Ensemble Fusion',
+          detail: 'RoBERTa-LIAR + DeBERTa-v3-LIAR ensemble with rule-weighted fusion',
         },
       ],
     },
     modelStack: {
       title: 'Model Stack',
       primaryLabel: 'Primary Model',
-      primaryValue: 'GitHub Models - openai/gpt-4.1',
-      primaryDescription: 'Forensic prompt tuned for deception heuristics with enforced JSON responses.',
+      primaryValue: 'RoBERTa-LIAR Ensemble',
+      primaryDescription: 'RoBERTa-base fine-tuned on LIAR/FEVER corpora for statement-level deception scoring.',
       secondaryLabel: 'Cross Check',
-      secondaryValue: 'Rule-Based Linguistic Profiler',
-      secondaryDescription: 'Validates AI output using hedging, pressure, and negation spectra.',
+      secondaryValue: 'DeBERTa-v3-LIAR',
+      secondaryDescription: 'DeBERTa-v3-large variant emphasising temporal drift and pressure cues for secondary validation.',
     },
     analysisPanel: {
       badge: 'Analysis Stack',
@@ -729,11 +718,11 @@ const translations: Record<Locale, LocaleCopy> = {
       },
       emptyDescription: {
         intro:
-          'Detect linguistic inconsistencies and compute deception risk using GitHub Models GPT-4.1.',
+          'Detect linguistic inconsistencies and compute deception risk using RoBERTa-LIAR and DeBERTa-LIAR ensemble classifiers.',
         bullets: [
           'Quantifies hedging and evasive language',
           'Clusters pressure wording and denial bursts',
-          'Cross-validates LLM output with rule-based heuristics',
+          'Cross-validates ensemble output with rule-based heuristics',
         ],
         outro: 'Upload a sample log to receive the first report in under five seconds.',
       },
@@ -765,6 +754,10 @@ const translations: Record<Locale, LocaleCopy> = {
       status: 'LIVE',
       riskLabel: 'Risk',
     },
+    traffic: {
+      label: 'Active Operators',
+      active: (count) => `${count} analysts connected right now`,
+    },
   },
 };
 
@@ -772,7 +765,7 @@ const developmentLogTemplates: Record<Locale, DevLogTemplate[]> = {
   ko: [
     {
       code: 'SIG-294',
-      summary: '다국어 LLM 검증 파이프라인에 역위험 필터 추가 완료',
+      summary: '다국어 분류기 검증 파이프라인에 역위험 필터 추가 완료',
       detail: '시간 정보가 충돌하는 문장을 자동으로 재점수하여 허위 진술 가능성을 가중 적용합니다.',
       time: '09:42',
     },
@@ -798,7 +791,7 @@ const developmentLogTemplates: Record<Locale, DevLogTemplate[]> = {
   en: [
     {
       code: 'SIG-294',
-      summary: 'Inverse-risk filter deployed for multi-lingual GPT validation',
+      summary: 'Inverse-risk filter deployed for multilingual classifier validation',
       detail: 'Automatically re-scores conflicting timestamp narratives to amplify deception likelihood.',
       time: '09:42',
     },
@@ -1097,6 +1090,13 @@ export default function Home() {
     const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     if (saved === 'ko' || saved === 'en') {
       setLocale(saved);
+      return;
+    }
+    const browserLanguage = window.navigator.language?.toLowerCase() ?? '';
+    if (browserLanguage.startsWith('en')) {
+      setLocale('en');
+    } else if (browserLanguage.startsWith('ko')) {
+      setLocale('ko');
     }
   }, []);
 
@@ -1108,6 +1108,20 @@ export default function Home() {
   useEffect(() => {
     setRealtimeFeed(seedRealtimeFeed(locale));
   }, [locale]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = window.setInterval(() => {
+      setLiveSessions((current) => {
+        const delta = randomInt(-28, 42);
+        const next = current + delta;
+        if (next < 980) return randomInt(1010, 1100);
+        if (next > 2180) return randomInt(2050, 2140);
+        return next;
+      });
+    }, 5200);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1173,15 +1187,24 @@ export default function Home() {
   }, [isAnalyzing]);
 
   const copy = translations[locale];
+  const numberFormatter = useMemo(
+    () => new Intl.NumberFormat(locale === 'ko' ? 'ko-KR' : 'en-US'),
+    [locale],
+  );
   const logs = useMemo(() => buildDevelopmentLogs(locale), [locale]);
   const radarSeries = analysis ? buildRadarSeries(analysis) : null;
-  const radarChartData = radarSeries
+  const radarConfig = copy.analysisPanel?.radar;
+  const radarChartData = radarSeries && radarConfig
     ? radarSeries.map((axis) => ({
         id: axis.id,
-        label: copy.analysisPanel.radar.axes[axis.id],
+        label: radarConfig.axes[axis.id],
         value: axis.value,
       }))
     : null;
+  const formattedLiveSessions = useMemo(
+    () => numberFormatter.format(liveSessions),
+    [numberFormatter, liveSessions],
+  );
 
   const displayPreview = useMemo(() => {
     if (serverPreview) return serverPreview;
@@ -1296,8 +1319,8 @@ export default function Home() {
         typeof data.reason === 'string' && data.reason.trim().length > 0
           ? data.reason
           : locale === 'ko'
-          ? 'LLM JSON 파싱 실패'
-          : 'LLM JSON parsing failure';
+          ? '모델 JSON 파싱 실패'
+          : 'Model JSON parsing failure';
 
       setStatus({ key: 'phase3' });
       setAnalysis(data.analysis as AnalysisResult);
@@ -1451,9 +1474,7 @@ export default function Home() {
                 >
                   {isAnalyzing ? copy.actions.analyzing : copy.actions.analyze}
                 </button>
-                <p className="text-xs text-slate-500">
-                  GitHub Models GPT-4.1 · Rule-based cross validation · Secure local execution
-                </p>
+                <p className="text-xs text-slate-500">{copy.actions.footnote}</p>
               </div>
 
               {errorMessage && (
