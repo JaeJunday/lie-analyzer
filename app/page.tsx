@@ -1,15 +1,39 @@
 'use client';
 
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
-import {
-  analyzeTranscriptFallback,
-  type AnalysisResult,
-  type CueInsight,
-  type CueRisk,
-  type EvidenceInsight,
-  type Locale,
-  type MetricInsight,
-} from '@/lib/analyzeFallback';
+import HexRadarChart from '@/components/HexRadarChart';
+type Locale = 'ko' | 'en';
+
+type CueRisk = 'Baseline' | 'Elevated' | 'Critical';
+
+interface CueInsight {
+  label: string;
+  value: string;
+  risk: CueRisk;
+  detail: string;
+}
+
+interface MetricInsight {
+  label: string;
+  value: string;
+  hint: string;
+}
+
+interface EvidenceInsight {
+  quote: string;
+  rationale: string;
+}
+
+interface AnalysisResult {
+  lieProbability: number;
+  confidenceScore: number;
+  summary: string;
+  cues: CueInsight[];
+  metrics: MetricInsight[];
+  evidence: EvidenceInsight[];
+}
+
+type RadarAxisKey = 'risk' | 'confidence' | 'hedging' | 'pressure' | 'negation' | 'coverage';
 
 type StatusState =
   | { key: 'idle' }
@@ -109,6 +133,11 @@ interface LocaleCopy {
       outro: string;
     };
     confidenceLabel: (score: number) => string;
+    radar: {
+      title: string;
+      description: string;
+      axes: Record<RadarAxisKey, string>;
+    };
   };
   warning: {
     title: string;
@@ -133,10 +162,318 @@ interface LogItem {
   detail: string;
 }
 
+interface DevLogTemplate {
+  code: string;
+  summary: string;
+  detail: string;
+  time: string; // HH:mm in Zulu
+}
+
+interface FallbackCopy {
+  summary: (hedgingDensity: number, pressureDensity: number, lieProbability: number) => string;
+  hedgingLabel: string;
+  hedgingDetail: (signals: string[]) => string;
+  hedgingDetailNone: string;
+  pressureLabel: string;
+  pressureDetail: (signals: string[]) => string;
+  pressureDetailNone: string;
+  negationLabel: string;
+  negationDetail: string;
+  conflictLabel: string;
+  conflictDetail: string;
+  metrics: {
+    wordCountLabel: string;
+    wordCountHint: string;
+    coverageLabel: string;
+    coverageHint: string;
+    negationLabel: string;
+    negationHint: string;
+  };
+  evidence: {
+    noDataQuote: string;
+    noDataDetail: string;
+    hedgePrefix: string;
+    pressurePrefix: string;
+    defaultDetail: string;
+  };
+}
+
+const hedgingKeywords = [
+  'maybe',
+  'perhaps',
+  'possibly',
+  'might',
+  'guess',
+  'around',
+  'roughly',
+  'seems',
+  'kind of',
+  'sort of',
+  'probably',
+  'i think',
+  'i believe',
+  'could be',
+];
+
+const pressureKeywords = [
+  'honestly',
+  'trust me',
+  'believe me',
+  'truth',
+  'swear',
+  'definitely',
+  'absolutely',
+  'never',
+  'always',
+  'promise',
+  '100%',
+];
+
+const contradictionJoiners = ['but', 'however', 'yet', 'though', 'nevertheless'];
+
+const negationKeywords = ['not', "didn't", "don't", 'no', 'never'];
+
+const fallbackDictionary: Record<Locale, FallbackCopy> = {
+  ko: {
+    summary: (hedgingDensity, pressureDensity, lieProbability) =>
+      `휴리스틱 백업 엔진 실행 결과: 헤징 ${(hedgingDensity * 100).toFixed(1)}%, 압박 ${(pressureDensity * 100).toFixed(1)}%로 추산된 위험도는 ${lieProbability}% 입니다.`,
+    hedgingLabel: '헤징 밀도',
+    hedgingDetail: (signals) => `불확실성 지표 탐지: ${signals.join(', ')}`,
+    hedgingDetailNone: '뚜렷한 헤징 표현은 없으며 다른 지표가 위험도를 구성합니다.',
+    pressureLabel: '압박 언어',
+    pressureDetail: (signals) => `보증성 어휘 관측: ${signals.join(', ')}`,
+    pressureDetailNone: '직접적인 압박 언어는 낮은 수준으로 관측됩니다.',
+    negationLabel: '부정 진술 빈도',
+    negationDetail: '연속된 부정 진술은 방어적 진술 패턴과 상관 관계가 있습니다.',
+    conflictLabel: '상충 구문',
+    conflictDetail: '상반된 서술이 연속적으로 등장해 맥락 변동성이 상승했습니다.',
+    metrics: {
+      wordCountLabel: '단어 수',
+      wordCountHint: '샘플 분량은 점수 안정성에 직접 영향을 줍니다.',
+      coverageLabel: '문장 플래그 비율',
+      coverageHint: '위험 지표에 반응한 문장의 비율입니다.',
+      negationLabel: '부정 빈도',
+      negationHint: '집중된 부정 진술은 내러티브 조정의 전조일 수 있습니다.',
+    },
+    evidence: {
+      noDataQuote: '인용할 만한 문장이 충분하지 않습니다.',
+      noDataDetail: '추가 발화를 확보한 뒤 재분석하는 것이 좋습니다.',
+      hedgePrefix: '헤징 지표',
+      pressurePrefix: '압박 지표',
+      defaultDetail: '휴리스틱 점수가 높은 문장.',
+    },
+  },
+  en: {
+    summary: (hedgingDensity, pressureDensity, lieProbability) =>
+      `Fallback heuristic executed: hedging ${(hedgingDensity * 100).toFixed(1)}% and pressure ${(pressureDensity * 100).toFixed(1)}% yielded a ${lieProbability}% deception score.`,
+    hedgingLabel: 'Hedging Density',
+    hedgingDetail: (signals) => `Uncertainty markers detected: ${signals.join(', ')}`,
+    hedgingDetailNone: 'Minimal hedging observed; other cues drive the score.',
+    pressureLabel: 'Pressure Language',
+    pressureDetail: (signals) => `Reassurance pressure phrases: ${signals.join(', ')}`,
+    pressureDetailNone: 'Low reassurance language detected.',
+    negationLabel: 'Negation Burst',
+    negationDetail: 'Frequent denials correlate with defensive narrative posture.',
+    conflictLabel: 'Conflicting Clauses',
+    conflictDetail: 'Sequential reversals flagged for contextual volatility.',
+    metrics: {
+      wordCountLabel: 'Word Count',
+      wordCountHint: 'Sample volume directly impacts scoring stability.',
+      coverageLabel: 'Sentence Coverage',
+      coverageHint: 'Share of the transcript triggering risk markers.',
+      negationLabel: 'Negation Frequency',
+      negationHint: 'Dense denial clusters often precede narrative adjustments.',
+    },
+    evidence: {
+      noDataQuote: 'Not enough material to generate defensible evidence quotes.',
+      noDataDetail: 'Gather more utterances and rerun the profiler.',
+      hedgePrefix: 'Hedge cue',
+      pressurePrefix: 'Pressure cue',
+      defaultDetail: 'High scoring sentence from heuristic engine.',
+    },
+  },
+};
+
+const escapeRegExp = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const countKeywordHits = (text: string, keywords: string[]) =>
+  keywords.reduce((total, keyword) => {
+    const pattern = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'gi');
+    const matches = text.match(pattern);
+    return total + (matches ? matches.length : 0);
+  }, 0);
+
+const extractKeywordSignals = (text: string, keywords: string[]) =>
+  keywords
+    .map((keyword) => {
+      const pattern = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'gi');
+      const count = text.match(pattern)?.length ?? 0;
+      return { keyword, count };
+    })
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4)
+    .map((item) => `${item.keyword}(${item.count})`);
+
+const synthesizeEvidence = (
+  highlighted: string[],
+  hedgingSignals: string[],
+  pressureSignals: string[],
+  locale: Locale,
+): EvidenceInsight[] => {
+  const copy = fallbackDictionary[locale].evidence;
+
+  if (highlighted.length === 0) {
+    return [
+      {
+        quote: copy.noDataQuote,
+        rationale: copy.noDataDetail,
+      },
+    ];
+  }
+
+  return highlighted.map((sentence, index) => {
+    const rationaleParts: string[] = [];
+    if (hedgingSignals[index]) rationaleParts.push(`${copy.hedgePrefix}: ${hedgingSignals[index]}`);
+    if (pressureSignals[index]) rationaleParts.push(`${copy.pressurePrefix}: ${pressureSignals[index]}`);
+    const rationale = rationaleParts.length > 0 ? rationaleParts.join(' | ') : copy.defaultDetail;
+    return {
+      quote: sentence,
+      rationale,
+    };
+  });
+};
+
+const analyzeTranscriptFallback = (raw: string, locale: Locale): AnalysisResult => {
+  const text = raw.trim();
+  const lower = text.toLowerCase();
+  const words = lower.split(/\s+/).filter(Boolean);
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  const hedgingHits = countKeywordHits(lower, hedgingKeywords);
+  const pressureHits = countKeywordHits(lower, pressureKeywords);
+  const negationHits = countKeywordHits(lower, negationKeywords);
+
+  const hedgingDensity = hedgingHits / Math.max(words.length, 1);
+  const pressureDensity = pressureHits / Math.max(words.length, 1);
+  const negationDensity = negationHits / Math.max(words.length, 1);
+
+  const contradictionCandidates = sentences
+    .filter((sentence) => {
+      const normalized = sentence.toLowerCase();
+      return (
+        contradictionJoiners.some((joiner) => normalized.includes(` ${joiner} `)) &&
+        (normalized.includes("i didn't") ||
+          normalized.includes('i did') ||
+          normalized.includes('never') ||
+          normalized.includes('no'))
+      );
+    })
+    .slice(0, 3);
+
+  const highlightedSentences = sentences
+    .map((sentence) => {
+      const normalized = sentence.toLowerCase();
+      const keywordHits = [...hedgingKeywords, ...pressureKeywords].filter((keyword) =>
+        normalized.includes(keyword),
+      ).length;
+      return { sentence, keywordHits };
+    })
+    .filter((entry) => entry.keywordHits > 0)
+    .sort((a, b) => b.keywordHits - a.keywordHits)
+    .slice(0, 3)
+    .map((entry) => entry.sentence);
+
+  const baseScore =
+    42 +
+    hedgingDensity * 520 +
+    pressureDensity * 360 +
+    negationDensity * 180 +
+    contradictionCandidates.length * 4;
+
+  const lieProbability = Math.min(96, Math.max(5, Math.round(baseScore)));
+
+  const coverageFactor = Math.min(1, words.length / 320);
+  const stabilityPenalty = Math.abs(hedgingDensity - pressureDensity) * 120;
+  const confidenceScore = Math.max(
+    38,
+    Math.min(94, Math.round(58 + coverageFactor * 32 - stabilityPenalty)),
+  );
+
+  const hedgingSignals = extractKeywordSignals(lower, hedgingKeywords);
+  const pressureSignals = extractKeywordSignals(lower, pressureKeywords);
+
+  const copy = fallbackDictionary[locale];
+
+  const cues: CueInsight[] = [
+    {
+      label: copy.hedgingLabel,
+      value: `${(hedgingDensity * 100).toFixed(1)}%`,
+      risk: hedgingDensity > 0.035 ? 'Elevated' : hedgingDensity > 0.02 ? 'Baseline' : 'Baseline',
+      detail:
+        hedgingSignals.length > 0 ? copy.hedgingDetail(hedgingSignals) : copy.hedgingDetailNone,
+    },
+    {
+      label: copy.pressureLabel,
+      value: `${(pressureDensity * 100).toFixed(1)}%`,
+      risk: pressureDensity > 0.03 ? 'Critical' : pressureDensity > 0.015 ? 'Elevated' : 'Baseline',
+      detail:
+        pressureSignals.length > 0
+          ? copy.pressureDetail(pressureSignals)
+          : copy.pressureDetailNone,
+    },
+    {
+      label: copy.negationLabel,
+      value: `${(negationDensity * 100).toFixed(1)}%`,
+      risk: negationDensity > 0.025 ? 'Elevated' : 'Baseline',
+      detail: copy.negationDetail,
+    },
+  ];
+
+  if (contradictionCandidates.length > 0) {
+    cues.push({
+      label: copy.conflictLabel,
+      value: `${contradictionCandidates.length}`,
+      risk: contradictionCandidates.length > 1 ? 'Critical' : 'Elevated',
+      detail: copy.conflictDetail,
+    });
+  }
+
+  const metrics: MetricInsight[] = [
+    {
+      label: copy.metrics.wordCountLabel,
+      value: `${words.length.toLocaleString()} terms`,
+      hint: copy.metrics.wordCountHint,
+    },
+    {
+      label: copy.metrics.coverageLabel,
+      value: `${Math.round((highlightedSentences.length / Math.max(sentences.length, 1)) * 100)}%`,
+      hint: copy.metrics.coverageHint,
+    },
+    {
+      label: copy.metrics.negationLabel,
+      value: `${(negationDensity * 100).toFixed(1)}%`,
+      hint: copy.metrics.negationHint,
+    },
+  ];
+
+  return {
+    lieProbability,
+    confidenceScore,
+    summary: copy.summary(hedgingDensity, pressureDensity, lieProbability),
+    cues,
+    metrics,
+    evidence: synthesizeEvidence(highlightedSentences, hedgingSignals, pressureSignals, locale),
+  };
+};
+
 const allowedExtensions = ['.txt', '.json', '.csv', '.html', '.pdf'];
 
 const TOKEN_MAX = 3;
-const TOKEN_INTERVAL_MS = 30 * 60 * 1000;
+const TOKEN_INTERVAL_MS = 5 * 60 * 1000;
 const TOKEN_STORAGE_KEY = 'op6-token-state';
 const LOCALE_STORAGE_KEY = 'op6-locale';
 
@@ -202,7 +539,7 @@ const translations: Record<Locale, LocaleCopy> = {
     },
     tokens: {
       label: 'Access Tokens',
-      subtitle: 'OP-6 실행 시 토큰 1개 소비, 30분마다 자동으로 1개 충전 (최대 3개)',
+      subtitle: 'OP-6 실행 시 토큰 1개 소비, 5분마다 자동으로 1개 충전 (최대 3개)',
       count: (value, max) => `${value}/${max} 토큰`,
       next: (minutes, seconds) =>
         `다음 토큰 충전까지 ${String(minutes).padStart(2, '0')}분 ${String(seconds).padStart(2, '0')}초`,
@@ -274,6 +611,18 @@ const translations: Record<Locale, LocaleCopy> = {
         outro: '샘플 로그를 업로드하면 3~5초 내에 첫 결과가 제공됩니다.',
       },
       confidenceLabel: (score) => `모델 신뢰도 ${score}% (composite)`,
+      radar: {
+        title: '위험 벡터 맵',
+        description: '핵심 지표를 0-100 스케일에 정규화한 육각형 프로젝션입니다.',
+        axes: {
+          risk: '거짓 가능성',
+          confidence: '모델 신뢰도',
+          hedging: '헤징 밀도',
+          pressure: '압박 언어',
+          negation: '부정 빈도',
+          coverage: '문장 커버리지',
+        },
+      },
     },
     warning: {
       title: 'CIA/FBI 합동 경고',
@@ -319,7 +668,7 @@ const translations: Record<Locale, LocaleCopy> = {
     },
     tokens: {
       label: 'Access Tokens',
-      subtitle: 'Consumes 1 token per OP-6 execution. Recharges 1 token every 30 minutes (max 3).',
+      subtitle: 'Consumes 1 token per OP-6 execution. Recharges 1 token every 5 minutes (max 3).',
       count: (value, max) => `${value}/${max} tokens`,
       next: (minutes, seconds) =>
         `Next token in ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`,
@@ -389,6 +738,18 @@ const translations: Record<Locale, LocaleCopy> = {
         outro: 'Upload a sample log to receive the first report in under five seconds.',
       },
       confidenceLabel: (score) => `Model confidence ${score}% (composite)`,
+      radar: {
+        title: 'Risk Vector Map',
+        description: 'Six-key indicators normalized to a 0–100 scale.',
+        axes: {
+          risk: 'Lie Probability',
+          confidence: 'Model Confidence',
+          hedging: 'Hedging Density',
+          pressure: 'Pressure Language',
+          negation: 'Negation Burst',
+          coverage: 'Sentence Coverage',
+        },
+      },
     },
     warning: {
       title: 'CIA/FBI Joint Warning',
@@ -407,57 +768,57 @@ const translations: Record<Locale, LocaleCopy> = {
   },
 };
 
-const developmentLogs: Record<Locale, LogItem[]> = {
+const developmentLogTemplates: Record<Locale, DevLogTemplate[]> = {
   ko: [
     {
-      timestamp: '2025-03-27 09:42 Z',
       code: 'SIG-294',
       summary: '다국어 LLM 검증 파이프라인에 역위험 필터 추가 완료',
       detail: '시간 정보가 충돌하는 문장을 자동으로 재점수하여 허위 진술 가능성을 가중 적용합니다.',
+      time: '09:42',
     },
     {
-      timestamp: '2025-03-26 22:10 Z',
       code: 'OPS-188',
       summary: '토큰 스케줄러 퍼시스턴스 패치',
       detail: '브라우저 재시작 후에도 충전 카운트가 유지되도록 드리프트 내성 타임스탬프 체계를 도입했습니다.',
+      time: '22:10',
     },
     {
-      timestamp: '2025-03-25 14:55 Z',
       code: 'JTF-502',
       summary: 'FBI 공조 감사 규약 준수 확인',
       detail: '사건 보고서 내보내기 시 자동 비식별 처리 매크로를 적용하도록 워크플로를 동기화했습니다.',
+      time: '14:55',
     },
     {
-      timestamp: '2025-03-24 08:18 Z',
       code: 'LAB-207',
       summary: '휴리스틱 엔진 헤징 사전 확장',
       detail: '비밀 감청 코퍼스에서 추가된 38개의 회피 표현을 탐지 목록에 반영했습니다.',
+      time: '08:18',
     },
   ],
   en: [
     {
-      timestamp: '2025-03-27 09:42 Z',
       code: 'SIG-294',
       summary: 'Inverse-risk filter deployed for multi-lingual GPT validation',
       detail: 'Automatically re-scores conflicting timestamp narratives to amplify deception likelihood.',
+      time: '09:42',
     },
     {
-      timestamp: '2025-03-26 22:10 Z',
       code: 'OPS-188',
       summary: 'Token scheduler persistence patch',
       detail: 'Introduced drift-tolerant timestamps so recharge timers survive browser restarts.',
+      time: '22:10',
     },
     {
-      timestamp: '2025-03-25 14:55 Z',
       code: 'JTF-502',
       summary: 'Joint task force audit alignment',
       detail: 'Synced export workflow with FBI-approved redaction macros for casework artifacts.',
+      time: '14:55',
     },
     {
-      timestamp: '2025-03-24 08:18 Z',
       code: 'LAB-207',
       summary: 'Heuristic engine hedging lexicon expanded',
       detail: 'Integrated 38 covert intercept phrases into the evasive-language detection list.',
+      time: '08:18',
     },
   ],
 };
@@ -478,6 +839,112 @@ const REALTIME_FEED_LIMIT = 24;
 const realtimeTags: Record<Locale, string[]> = {
   ko: ['[ALERT]', '[SYNC]', '[TRACE]', '[VECTOR]'],
   en: ['[ALERT]', '[SYNC]', '[TRACE]', '[VECTOR]'],
+};
+
+const formatZuluTimestamp = (date: Date) => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes} Z`;
+};
+
+const buildDevelopmentLogs = (locale: Locale, referenceDate = new Date()): LogItem[] => {
+  const templates = developmentLogTemplates[locale];
+  if (!templates) return [];
+
+  const baseDay = Math.min(referenceDate.getUTCDate(), 28);
+  let accumulatedMonths = 0;
+
+  return templates.map((template, index) => {
+    if (index === 0) {
+      accumulatedMonths = 0;
+    } else {
+      accumulatedMonths += index % 2 === 0 ? 4 : 3;
+    }
+
+    const [hours, minutes] = template.time.split(':').map((value) => parseInt(value, 10));
+    const entryDate = new Date(
+      Date.UTC(
+        referenceDate.getUTCFullYear(),
+        referenceDate.getUTCMonth(),
+        baseDay,
+        Number.isFinite(hours) ? hours : 0,
+        Number.isFinite(minutes) ? minutes : 0,
+        0,
+      ),
+    );
+
+    entryDate.setUTCMonth(entryDate.getUTCMonth() - accumulatedMonths);
+    entryDate.setUTCDate(entryDate.getUTCDate() - index * 2);
+
+    return {
+      timestamp: formatZuluTimestamp(entryDate),
+      code: template.code,
+      summary: template.summary,
+      detail: template.detail,
+    };
+  });
+};
+
+const extractPercent = (input?: string | null) => {
+  if (!input) return null;
+  const match = input.match(/(-?\d+(?:\.\d+)?)\s*%/);
+  return match ? Number.parseFloat(match[1]) : null;
+};
+
+const average = (values: Array<number | null | undefined>) => {
+  const valid = values.filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+  );
+  if (!valid.length) return null;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+};
+
+const clampRadarValue = (value: number | null | undefined, fallback: number) => {
+  const resolved = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(100, Math.round(resolved)));
+};
+
+const buildRadarSeries = (analysis: AnalysisResult): Array<{ id: RadarAxisKey; value: number }> => {
+  const riskValue = clampRadarValue(analysis.lieProbability, 50);
+  const confidenceValue = clampRadarValue(analysis.confidenceScore, 60);
+
+  const hedgingCue = analysis.cues.find((cue) => /hedging|헤징/i.test(cue.label));
+  const pressureCue = analysis.cues.find((cue) => /pressure|압박/i.test(cue.label));
+  const negationCue = analysis.cues.find((cue) => /negation|부정/i.test(cue.label));
+
+  const hedgingFallback = average([riskValue, confidenceValue]) ?? (riskValue + confidenceValue) / 2;
+  const hedgingValue = clampRadarValue(extractPercent(hedgingCue?.value), hedgingFallback);
+  const pressureValue = clampRadarValue(
+    extractPercent(pressureCue?.value),
+    average([riskValue, hedgingValue]) ?? (riskValue + hedgingValue) / 2,
+  );
+  const negationValue = clampRadarValue(
+    extractPercent(negationCue?.value),
+    average([pressureValue, hedgingValue]) ?? (pressureValue + hedgingValue) / 2,
+  );
+
+  const coverageMetric = analysis.metrics.find((metric) => /coverage|커버|sentence/i.test(metric.label));
+  const metricPercents = analysis.metrics
+    .map((metric) => extractPercent(metric.value))
+    .filter((value): value is number => value !== null);
+  const averageMetricPercent = metricPercents.length ? average(metricPercents) : null;
+  const coverageFallback =
+    average([averageMetricPercent, hedgingValue, pressureValue]) ??
+    averageMetricPercent ??
+    (hedgingValue + pressureValue + negationValue) / 3;
+  const coverageValue = clampRadarValue(extractPercent(coverageMetric?.value), coverageFallback);
+
+  return [
+    { id: 'risk', value: riskValue },
+    { id: 'confidence', value: confidenceValue },
+    { id: 'hedging', value: hedgingValue },
+    { id: 'pressure', value: pressureValue },
+    { id: 'negation', value: negationValue },
+    { id: 'coverage', value: coverageValue },
+  ];
 };
 
 type TemplatePayload = {
@@ -706,7 +1173,15 @@ export default function Home() {
   }, [isAnalyzing]);
 
   const copy = translations[locale];
-  const logs = developmentLogs[locale];
+  const logs = useMemo(() => buildDevelopmentLogs(locale), [locale]);
+  const radarSeries = analysis ? buildRadarSeries(analysis) : null;
+  const radarChartData = radarSeries
+    ? radarSeries.map((axis) => ({
+        id: axis.id,
+        label: copy.analysisPanel.radar.axes[axis.id],
+        value: axis.value,
+      }))
+    : null;
 
   const displayPreview = useMemo(() => {
     if (serverPreview) return serverPreview;
@@ -883,14 +1358,8 @@ export default function Home() {
     <div className="min-h-screen bg-[#01030A] text-slate-100">
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 py-16">
         <header className="flex flex-col gap-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3 text-xs uppercase tracking-[0.35em] text-cyan-400/80">
-              <span className="rounded-full border border-cyan-500/40 px-3 py-1">
-                {copy.hero.badgeLabel}
-              </span>
-              <span>{copy.hero.organization}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-500">
+          <div className="flex justify-end text-xs uppercase tracking-[0.2em] text-slate-500">
+            <div className="flex items-center gap-2">
               <span>{copy.languageToggle.label}</span>
               <div className="flex overflow-hidden rounded-full border border-cyan-500/40 bg-slate-900/40">
                 {localeOptions.map((option) => (
@@ -1080,6 +1549,19 @@ export default function Home() {
                 </div>
 
                 <p className="text-sm leading-relaxed text-slate-300">{analysis.summary}</p>
+
+                {radarChartData && (
+                  <div className="rounded-2xl border border-cyan-500/20 bg-slate-950/60 p-6">
+                    <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-cyan-200">
+                      <span>{copy.analysisPanel.radar.title}</span>
+                      <span className="text-[10px] tracking-[0.25em] text-slate-500">Hex Plot</span>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-500">{copy.analysisPanel.radar.description}</p>
+                    <div className="mt-6 flex justify-center">
+                      <HexRadarChart data={radarChartData.map(({ label, value }) => ({ label, value }))} />
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <h3 className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
