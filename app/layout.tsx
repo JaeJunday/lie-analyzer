@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { siteName, siteUrl } from "@/lib/site-config";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -11,9 +12,6 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
-
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://lie-analyzer.vercel.app";
 
 export const metadata: Metadata = {
   title: "Lie Analyzer | Veracity Intelligence Unit",
@@ -29,7 +27,7 @@ export const metadata: Metadata = {
     description:
       "Professional linguistic deception profiler that extracts risk signals from uploaded conversation transcripts.",
     url: siteUrl,
-    siteName: "OP-6 Lie Analyzer",
+    siteName,
     images: [
       {
         url: "/og-image.png",
