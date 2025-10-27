@@ -46,6 +46,9 @@ export const metadata: Metadata = {
       "Linguistic deception profiler combining RoBERTa-LIAR ensembles with rule-based validation.",
     images: ["/og-image.png"],
   },
+  other: {
+    "google-adsense-account": "ca-pub-8192725368161923",
+  },
 };
 
 export default function RootLayout({
