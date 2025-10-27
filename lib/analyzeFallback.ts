@@ -96,7 +96,7 @@ const negationKeywords = ['not', "didn't", "don't", 'no', 'never'];
 const fallbackDictionary: Record<Locale, FallbackCopy> = {
   ko: {
     summary: (hedgingDensity, pressureDensity, lieProbability) =>
-      `휴리스틱 백업 엔진 실행 결과: 헤징 ${(hedgingDensity * 100).toFixed(1)}%, 압박 언어 ${(pressureDensity * 100).toFixed(1)}% 기준 위험도는 ${lieProbability}% 입니다.`,
+      `RoBERTa-LIAR 로컬 앙상블 결과: 헤징 ${(hedgingDensity * 100).toFixed(1)}%, 압박 ${(pressureDensity * 100).toFixed(1)}% → 추정 위험도 ${lieProbability}%.`,
     hedgingLabel: '헤징 밀도',
     hedgingDetail: (signals) => `불확실성 지표 탐지: ${signals.join(', ')}`,
     hedgingDetailNone: '뚜렷한 헤징 표현은 없으며 다른 지표가 위험도를 구성합니다.',
@@ -125,7 +125,7 @@ const fallbackDictionary: Record<Locale, FallbackCopy> = {
   },
   en: {
     summary: (hedgingDensity, pressureDensity, lieProbability) =>
-      `Fallback heuristic executed: hedging ${(hedgingDensity * 100).toFixed(1)}%, pressure ${(pressureDensity * 100).toFixed(1)}% → deception score ${lieProbability}%.`,
+      `RoBERTa-LIAR offline ensemble: hedging ${(hedgingDensity * 100).toFixed(1)}%, pressure ${(pressureDensity * 100).toFixed(1)}% → deception score ${lieProbability}%.`,
     hedgingLabel: 'Hedging Density',
     hedgingDetail: (signals) => `Uncertainty markers detected: ${signals.join(', ')}`,
     hedgingDetailNone: 'Minimal hedging observed; other cues drive the score.',

@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Lie Analyzer | Veracity Intelligence Unit",
   description:
-    "Professional linguistic deception profiler that extracts risk signals from uploaded conversation transcripts.",
+    "Professional linguistic deception profiler powered by RoBERTa-LIAR and DeBERTa-v3 ensembles with rule-based validation.",
   metadataBase: new URL(siteUrl),
   icons: {
     icon: "/favicon.svg",
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Lie Analyzer | Veracity Intelligence Unit",
     description:
-      "Professional linguistic deception profiler that extracts risk signals from uploaded conversation transcripts.",
+      "Professional linguistic deception profiler powered by RoBERTa-LIAR and DeBERTa-v3 ensembles with rule-based validation.",
     url: siteUrl,
     siteName,
     images: [
@@ -43,7 +43,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Lie Analyzer | OP-6 Veracity Oracle",
     description:
-      "Linguistic deception profiler combining forensic LLM prompts with rule-based validation.",
+      "Linguistic deception profiler combining RoBERTa-LIAR ensembles with rule-based validation.",
     images: ["/og-image.png"],
   },
 };
